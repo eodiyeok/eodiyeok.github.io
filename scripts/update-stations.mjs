@@ -1,11 +1,8 @@
-import { execFile } from 'node:child_process';
 import { mkdir, readFile, writeFile } from 'node:fs/promises';
 import { dirname, resolve } from 'node:path';
 import { fileURLToPath } from 'node:url';
-import { promisify } from 'node:util';
 
 const DATA_PAGE = 'https://www.data.go.kr/data/15122916/fileData.do';
-const execFileAsync = promisify(execFile);
 const OUTPUT = resolve(dirname(fileURLToPath(import.meta.url)), '../src/lib/data/stations.json');
 
 const LINE_NAMES = {
@@ -128,36 +125,6 @@ async function fetchWithRetry(url, label) {
 	throw new Error(`${label} 요청을 여러 번 시도했지만 실패했습니다.`, { cause: lastError });
 }
 
-async function downloadBytes(url, label) {
-	if (process.env.GITHUB_ACTIONS === 'true') {
-		console.log(`${label}: 장시간 연결 방식으로 요청합니다.`);
-		const { stdout } = await execFileAsync(
-			'curl',
-			[
-				'--fail',
-				'--location',
-				'--silent',
-				'--show-error',
-				'--ipv4',
-				'--connect-timeout',
-				'60',
-				'--max-time',
-				'180',
-				'--retry',
-				'2',
-				'--user-agent',
-				'eodiyeok-station-updater/1.0',
-				url
-			],
-			{ encoding: 'buffer', maxBuffer: 100 * 1024 * 1024 }
-		);
-		return Buffer.from(stdout);
-	}
-
-	const response = await fetchWithRetry(url, label);
-	return Buffer.from(await response.arrayBuffer());
-}
-
 async function loadSource() {
 	const inputIndex = process.argv.indexOf('--input');
 	if (inputIndex >= 0 && process.argv[inputIndex + 1]) {
@@ -168,12 +135,13 @@ async function loadSource() {
 		};
 	}
 
-	const pageHtml = (await downloadBytes(DATA_PAGE, '데이터 페이지')).toString('utf8');
+	const pageResponse = await fetchWithRetry(DATA_PAGE, '데이터 페이지');
+	const pageHtml = await pageResponse.text();
 	const downloadUrl = pageHtml.match(/"contentUrl"\s*:\s*"([^"]+)"/)?.[1];
 	if (!downloadUrl) throw new Error('공식 CSV 다운로드 주소를 찾지 못했습니다.');
 
 	return {
-		bytes: await downloadBytes(downloadUrl, 'CSV'),
+		bytes: Buffer.from(await (await fetchWithRetry(downloadUrl, 'CSV')).arrayBuffer()),
 		downloadUrl,
 		pageHtml
 	};
