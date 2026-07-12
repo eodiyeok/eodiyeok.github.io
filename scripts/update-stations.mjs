@@ -45,6 +45,7 @@ const LINE_COLORS = {
 const LIGHT_RAIL = new Set(['우이신설', '신림선', '김포골드라인', '의정부경전철', '에버라인']);
 
 const EXCLUDED_LINES = new Set(['자기부상']);
+const RETRY_DELAYS = [0, 5_000, 15_000, 30_000];
 const DISTINCT_SAME_NAME = new Set([
 	'신촌::2호선',
 	'신촌::경의·중앙선',
@@ -100,6 +101,30 @@ function physicalStationKey(name, line) {
 	return DISTINCT_SAME_NAME.has(candidate) ? candidate : name;
 }
 
+function wait(milliseconds) {
+	return new Promise((resolvePromise) => setTimeout(resolvePromise, milliseconds));
+}
+
+async function fetchWithRetry(url, label) {
+	let lastError;
+	for (const [index, delay] of RETRY_DELAYS.entries()) {
+		if (delay > 0) await wait(delay);
+		try {
+			const response = await fetch(url, {
+				headers: { 'user-agent': 'eodiyeok-station-updater/1.0' }
+			});
+			if (!response.ok) throw new Error(`${label} 요청 실패: ${response.status}`);
+			return response;
+		} catch (error) {
+			lastError = error;
+			if (index < RETRY_DELAYS.length - 1) {
+				console.warn(`${label} 연결 실패, ${index + 2}번째 시도를 준비합니다.`);
+			}
+		}
+	}
+	throw new Error(`${label} 요청을 여러 번 시도했지만 실패했습니다.`, { cause: lastError });
+}
+
 async function loadSource() {
 	const inputIndex = process.argv.indexOf('--input');
 	if (inputIndex >= 0 && process.argv[inputIndex + 1]) {
@@ -110,18 +135,12 @@ async function loadSource() {
 		};
 	}
 
-	const pageResponse = await fetch(DATA_PAGE, {
-		headers: { 'user-agent': 'eodiyeok-station-updater/1.0' }
-	});
-	if (!pageResponse.ok) throw new Error(`데이터 페이지 요청 실패: ${pageResponse.status}`);
+	const pageResponse = await fetchWithRetry(DATA_PAGE, '데이터 페이지');
 	const pageHtml = await pageResponse.text();
 	const downloadUrl = pageHtml.match(/"contentUrl"\s*:\s*"([^"]+)"/)?.[1];
 	if (!downloadUrl) throw new Error('공식 CSV 다운로드 주소를 찾지 못했습니다.');
 
-	const csvResponse = await fetch(downloadUrl, {
-		headers: { 'user-agent': 'eodiyeok-station-updater/1.0' }
-	});
-	if (!csvResponse.ok) throw new Error(`CSV 요청 실패: ${csvResponse.status}`);
+	const csvResponse = await fetchWithRetry(downloadUrl, 'CSV');
 	return {
 		bytes: Buffer.from(await csvResponse.arrayBuffer()),
 		downloadUrl,
