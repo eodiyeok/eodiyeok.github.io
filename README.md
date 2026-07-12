@@ -17,13 +17,13 @@ npm run dev -- --host 0.0.0.0
 
 ## 역 정보 갱신
 
-국토교통부 공공데이터의 도시철도 전체노선 CSV를 내려받아 수도권 역 목록을 다시 만듭니다.
+철도산업정보센터가 변경 때마다 공개하는 운영기관·노선·역 코드정보 엑셀을 내려받아 수도권 역 목록을 다시 만듭니다. 별도 API 키는 필요하지 않습니다.
 
 ```sh
 npm run data:update
 ```
 
-GitHub Actions의 `update-stations.yml`이 매일 공식 자료의 기준일을 확인하고, 새 자료가 있으면 저장소에 알림 이슈를 만듭니다. 공공데이터포털이 GitHub 해외 서버의 CSV 다운로드를 허용하지 않아 실제 반영은 위 명령을 WSL에서 실행합니다. `deploy.yml`은 `main` 브랜치를 GitHub Pages에 배포합니다.
+GitHub Actions의 `update-stations.yml`이 매일 공식 자료를 확인합니다. 새 파일이 있으면 역 목록을 갱신하고 검사한 뒤 자동 커밋하며, `deploy.yml`이 변경된 `main` 브랜치를 GitHub Pages에 배포합니다.
 
 ## 검사
 

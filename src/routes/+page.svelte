@@ -372,7 +372,7 @@
 			역 정보 {formatSourceDate(stationData.meta.sourceDate)} 기준 ·
 			<!-- eslint-disable-next-line svelte/no-navigation-without-resolve -->
 			<a href={stationData.meta.sourcePage} target="_blank" rel="noreferrer"
-				>국토교통부 공공데이터</a
+				>철도산업정보센터 공식 자료</a
 			>
 		</p>
 	</footer>

@@ -1,8 +1,9 @@
-import { mkdir, readFile, writeFile } from 'node:fs/promises';
+import { readFile, writeFile } from 'node:fs/promises';
 import { dirname, resolve } from 'node:path';
 import { fileURLToPath } from 'node:url';
+import ExcelJS from 'exceljs';
 
-const DATA_PAGE = 'https://www.data.go.kr/data/15122916/fileData.do';
+const SOURCE_LIST = 'https://data.kric.go.kr/rips/M_04_02/intro.do';
 const OUTPUT = resolve(dirname(fileURLToPath(import.meta.url)), '../src/lib/data/stations.json');
 
 const LINE_NAMES = {
@@ -42,48 +43,42 @@ const LINE_COLORS = {
 	'GTX-A': '#9A6292'
 };
 
+const PREFERRED_ORDER = Object.keys(LINE_COLORS);
+const INCLUDED_LINES = new Set(PREFERRED_ORDER);
+const CAPITAL_OPERATOR_CODES = new Set([
+	'AR',
+	'DX',
+	'EV',
+	'GM',
+	'GU',
+	'GX',
+	'IC',
+	'KR',
+	'NU',
+	'S1',
+	'S9',
+	'SL',
+	'SR',
+	'SW',
+	'UI',
+	'UL'
+]);
 const LIGHT_RAIL = new Set(['우이신설', '신림선', '김포골드라인', '의정부경전철', '에버라인']);
-
-const EXCLUDED_LINES = new Set(['자기부상']);
-const RETRY_DELAYS = [0, 5_000, 15_000, 30_000];
 const DISTINCT_SAME_NAME = new Set([
 	'신촌::2호선',
 	'신촌::경의·중앙선',
 	'양평::5호선',
 	'양평::경의·중앙선'
 ]);
-
-function parseCsvLine(line) {
-	const values = [];
-	let value = '';
-	let quoted = false;
-	for (let index = 0; index < line.length; index += 1) {
-		const character = line[index];
-		if (character === '"') {
-			if (quoted && line[index + 1] === '"') {
-				value += '"';
-				index += 1;
-			} else {
-				quoted = !quoted;
-			}
-		} else if (character === ',' && !quoted) {
-			values.push(value.trim());
-			value = '';
-		} else {
-			value += character;
-		}
-	}
-	values.push(value.trim());
-	return values;
-}
-
-function parseCsv(text) {
-	const [headerLine, ...lines] = text.replaceAll('\r', '').split('\n').filter(Boolean);
-	const headers = parseCsvLine(headerLine);
-	return lines.map((line) =>
-		Object.fromEntries(headers.map((header, index) => [header, parseCsvLine(line)[index] ?? '']))
-	);
-}
+const REQUIRED_HEADERS = [
+	'RAIL_OPR_ISTT_CD',
+	'RAIL_OPR_ISTT_NM',
+	'LN_CD',
+	'LN_NM',
+	'STIN_CD',
+	'STIN_NM'
+];
+const RETRY_DELAYS = [0, 5_000, 15_000];
 
 function normalizedLine(line) {
 	return LINE_NAMES[line] ?? line;
@@ -111,7 +106,7 @@ async function fetchWithRetry(url, label) {
 		if (delay > 0) await wait(delay);
 		try {
 			const response = await fetch(url, {
-				headers: { 'user-agent': 'eodiyeok-station-updater/1.0' }
+				headers: { 'user-agent': 'eodiyeok-station-updater/2.0' }
 			});
 			if (!response.ok) throw new Error(`${label} 요청 실패: ${response.status}`);
 			return response;
@@ -125,103 +120,128 @@ async function fetchWithRetry(url, label) {
 	throw new Error(`${label} 요청을 여러 번 시도했지만 실패했습니다.`, { cause: lastError });
 }
 
-async function loadSource() {
-	const inputIndex = process.argv.indexOf('--input');
-	if (inputIndex >= 0 && process.argv[inputIndex + 1]) {
-		return {
-			bytes: await readFile(resolve(process.argv[inputIndex + 1])),
-			downloadUrl: 'local-file',
-			pageHtml: ''
-		};
+function latestSourceFromList(html) {
+	const candidates = [];
+	for (const match of html.matchAll(
+		/<tr[^>]*onclick="[^"]*detail\.do[^"]*id=(\d+)[^"]*"[^>]*>([\s\S]*?)<\/tr>/g
+	)) {
+		const title = match[2]
+			.replace(/<[^>]+>/g, ' ')
+			.replace(/\s+/g, ' ')
+			.trim();
+		if (!title.includes('운영기관, 노선, 역 코드정보 리스트')) continue;
+		const date = title.match(/\((\d{4})\.(\d{2})\.(\d{2})\)/);
+		if (!date) continue;
+		candidates.push({
+			id: Number(match[1]),
+			sourceDate: `${date[1]}-${date[2]}-${date[3]}`
+		});
 	}
+	return candidates.sort(
+		(left, right) => right.sourceDate.localeCompare(left.sourceDate) || right.id - left.id
+	)[0];
+}
 
-	const pageResponse = await fetchWithRetry(DATA_PAGE, '데이터 페이지');
-	const pageHtml = await pageResponse.text();
-	const downloadUrl = pageHtml.match(/"contentUrl"\s*:\s*"([^"]+)"/)?.[1];
-	if (!downloadUrl) throw new Error('공식 CSV 다운로드 주소를 찾지 못했습니다.');
+async function discoverLatestSource() {
+	const listHtml = await (await fetchWithRetry(SOURCE_LIST, '공식 자료 목록')).text();
+	const latest = latestSourceFromList(listHtml);
+	if (!latest) throw new Error('최신 역 코드정보 자료를 찾지 못했습니다.');
 
+	const sourcePage = `https://data.kric.go.kr/rips/M_04_02/detail.do?id=${latest.id}`;
+	const detailHtml = await (await fetchWithRetry(sourcePage, '공식 자료 상세')).text();
+	const fileMatch = detailHtml.match(/href="([^"]*download\.file[^"]*)"[^>]*>([^<]*\.xlsx)<\/a>/i);
+	if (!fileMatch) throw new Error('최신 역 코드정보 엑셀 주소를 찾지 못했습니다.');
+
+	const downloadPath = fileMatch[1].replaceAll('&amp;', '&');
 	return {
-		bytes: Buffer.from(await (await fetchWithRetry(downloadUrl, 'CSV')).arrayBuffer()),
-		downloadUrl,
-		pageHtml
+		...latest,
+		sourcePage,
+		downloadUrl: new URL(downloadPath, sourcePage).href
 	};
 }
 
-const { bytes, downloadUrl, pageHtml } = await loadSource();
-const decoded = new TextDecoder('euc-kr').decode(bytes);
-const rows = parseCsv(decoded)
-	.filter((row) => row['권역명'] === '수도권')
-	.map((row) => ({
-		name: row['역명'].trim(),
-		line: normalizedLine(row['노선명'].trim()),
-		operator: row['철도운영기관명'].trim()
-	}))
-	.filter((row) => row.name && row.line && !EXCLUDED_LINES.has(row.line));
+async function loadWorkbookRows(bytes) {
+	const workbook = new ExcelJS.Workbook();
+	await workbook.xlsx.load(bytes);
 
-const lineStations = new Map();
-const lineOperators = new Map();
-const stationMap = new Map();
-
-for (const row of rows) {
-	if (!lineStations.has(row.line)) lineStations.set(row.line, new Set());
-	if (!lineOperators.has(row.line)) lineOperators.set(row.line, new Set());
-	lineStations.get(row.line).add(row.name);
-	lineOperators.get(row.line).add(row.operator);
-
-	const key = physicalStationKey(row.name, row.line);
-	if (!stationMap.has(key)) {
-		stationMap.set(key, { id: key, name: row.name, lines: [], operators: [] });
+	let sheet;
+	let headerIndexes;
+	for (const candidate of workbook.worksheets) {
+		const indexes = new Map();
+		candidate.getRow(1).eachCell((cell, column) => indexes.set(cell.text.trim(), column));
+		if (REQUIRED_HEADERS.every((header) => indexes.has(header))) {
+			sheet = candidate;
+			headerIndexes = indexes;
+			break;
+		}
 	}
-	const station = stationMap.get(key);
-	if (!station.lines.includes(row.line)) station.lines.push(row.line);
-	if (!station.operators.includes(row.operator)) station.operators.push(row.operator);
+	if (!sheet || !headerIndexes) throw new Error('역 코드정보 열을 엑셀에서 찾지 못했습니다.');
+
+	const rows = [];
+	sheet.eachRow((row, rowNumber) => {
+		if (rowNumber === 1) return;
+		const value = (header) => row.getCell(headerIndexes.get(header)).text.trim();
+		const line = normalizedLine(value('LN_NM'));
+		if (!CAPITAL_OPERATOR_CODES.has(value('RAIL_OPR_ISTT_CD')) || !INCLUDED_LINES.has(line)) return;
+		const name = value('STIN_NM');
+		const operator = value('RAIL_OPR_ISTT_NM');
+		if (name && operator) rows.push({ name, line, operator });
+	});
+	return rows;
 }
 
-const preferredOrder = [
-	'1호선',
-	'2호선',
-	'3호선',
-	'4호선',
-	'5호선',
-	'6호선',
-	'7호선',
-	'8호선',
-	'9호선',
-	'공항철도',
-	'경의·중앙선',
-	'경춘선',
-	'수인·분당선',
-	'신분당선',
-	'경강선',
-	'서해선',
-	'인천1호선',
-	'인천2호선',
-	'우이신설',
-	'신림선',
-	'김포골드라인',
-	'의정부경전철',
-	'에버라인',
-	'GTX-A'
-];
-const lineRank = new Map(preferredOrder.map((line, index) => [line, index]));
-const sortLines = (left, right) =>
-	(lineRank.get(left) ?? 999) - (lineRank.get(right) ?? 999) || left.localeCompare(right, 'ko');
+function buildStationData(rows) {
+	const lineStations = new Map();
+	const lineOperators = new Map();
+	const stationMap = new Map();
 
-const lines = [...lineStations.keys()].sort(sortLines).map((name) => ({
-	name,
-	color: LINE_COLORS[name] ?? '#405060',
-	category: lineCategory(name),
-	stationCount: lineStations.get(name).size,
-	operators: [...lineOperators.get(name)].sort((a, b) => a.localeCompare(b, 'ko'))
-}));
+	for (const row of rows) {
+		if (!lineStations.has(row.line)) lineStations.set(row.line, new Set());
+		if (!lineOperators.has(row.line)) lineOperators.set(row.line, new Set());
+		lineStations.get(row.line).add(row.name);
+		lineOperators.get(row.line).add(row.operator);
 
-const stations = [...stationMap.values()]
-	.map((station) => ({
-		...station,
-		lines: station.lines.sort(sortLines),
-		operators: station.operators.sort((a, b) => a.localeCompare(b, 'ko'))
-	}))
-	.sort((a, b) => a.name.localeCompare(b.name, 'ko'));
+		const key = physicalStationKey(row.name, row.line);
+		if (!stationMap.has(key)) {
+			stationMap.set(key, { id: key, name: row.name, lines: [], operators: [] });
+		}
+		const station = stationMap.get(key);
+		if (!station.lines.includes(row.line)) station.lines.push(row.line);
+		if (!station.operators.includes(row.operator)) station.operators.push(row.operator);
+	}
+
+	const lineRank = new Map(PREFERRED_ORDER.map((line, index) => [line, index]));
+	const sortLines = (left, right) =>
+		(lineRank.get(left) ?? 999) - (lineRank.get(right) ?? 999) || left.localeCompare(right, 'ko');
+
+	const lines = [...lineStations.keys()].sort(sortLines).map((name) => ({
+		name,
+		color: LINE_COLORS[name],
+		category: lineCategory(name),
+		stationCount: lineStations.get(name).size,
+		operators: [...lineOperators.get(name)].sort((a, b) => a.localeCompare(b, 'ko'))
+	}));
+
+	const stations = [...stationMap.values()]
+		.map((station) => ({
+			...station,
+			lines: station.lines.sort(sortLines),
+			operators: station.operators.sort((a, b) => a.localeCompare(b, 'ko'))
+		}))
+		.sort((a, b) => a.name.localeCompare(b.name, 'ko'));
+
+	return { lines, stations };
+}
+
+const source = await discoverLatestSource();
+const inputIndex = process.argv.indexOf('--input');
+const bytes =
+	inputIndex >= 0 && process.argv[inputIndex + 1]
+		? await readFile(resolve(process.argv[inputIndex + 1]))
+		: Buffer.from(
+				await (await fetchWithRetry(source.downloadUrl, '역 코드정보 엑셀')).arrayBuffer()
+			);
+const { lines, stations } = buildStationData(await loadWorkbookRows(bytes));
 
 let existingOutput = null;
 try {
@@ -230,22 +250,16 @@ try {
 	// 첫 생성에서는 기존 파일이 없다.
 }
 
-const compactSourceDate = pageHtml.match(/국토교통부_도시철도 전체노선_(\d{8})/)?.[1];
-const sourceDate = compactSourceDate
-	? `${compactSourceDate.slice(0, 4)}-${compactSourceDate.slice(4, 6)}-${compactSourceDate.slice(6, 8)}`
-	: existingOutput?.meta?.sourceDate;
-if (!sourceDate) throw new Error('공식 데이터 기준일을 확인할 수 없습니다.');
-
 const output = {
 	meta: {
-		sourceName: '국토교통부_도시철도 전체노선',
-		sourcePage: DATA_PAGE,
-		downloadUrl,
-		sourceDate,
+		sourceName: '철도산업정보센터_운영기관·노선·역 코드정보',
+		sourcePage: source.sourcePage,
+		downloadUrl: source.downloadUrl,
+		sourceDate: source.sourceDate,
 		generatedAt: new Date().toISOString(),
 		stationCount: stations.length,
 		lineCount: lines.length,
-		excluded: ['운행이 중단된 자기부상 노선']
+		excluded: ['수도권 외 노선', '운행이 중단된 자기부상 노선']
 	},
 	lines,
 	stations
@@ -261,10 +275,13 @@ if (
 	existingOutput &&
 	JSON.stringify(withoutGeneratedAt(existingOutput)) === JSON.stringify(withoutGeneratedAt(output))
 ) {
-	console.log(`변경 없음: 수도권 ${stations.length}개 역, ${lines.length}개 노선`);
+	console.log(
+		`변경 없음: ${source.sourceDate} 기준 수도권 ${stations.length}개 역, ${lines.length}개 노선`
+	);
 	process.exit(0);
 }
 
-await mkdir(dirname(OUTPUT), { recursive: true });
 await writeFile(OUTPUT, `${JSON.stringify(output, null, 2)}\n`, 'utf8');
-console.log(`수도권 ${stations.length}개 역, ${lines.length}개 노선을 갱신했습니다.`);
+console.log(
+	`${source.sourceDate} 기준 수도권 ${stations.length}개 역, ${lines.length}개 노선을 갱신했습니다.`
+);
