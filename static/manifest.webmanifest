@@ -1,0 +1,25 @@
+{
+	"name": "어디역?",
+	"short_name": "어디역",
+	"description": "수도권 전철역 중 오늘 가볼 곳을 무작위로 골라주는 앱",
+	"lang": "ko-KR",
+	"start_url": "./",
+	"scope": "./",
+	"display": "standalone",
+	"background_color": "#eef2f5",
+	"theme_color": "#101820",
+	"icons": [
+		{
+			"src": "./icons/icon-192.png",
+			"sizes": "192x192",
+			"type": "image/png",
+			"purpose": "any maskable"
+		},
+		{
+			"src": "./icons/icon-512.png",
+			"sizes": "512x512",
+			"type": "image/png",
+			"purpose": "any maskable"
+		}
+	]
+}
