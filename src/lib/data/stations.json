@@ -1,10 +1,13 @@
 {
 	"meta": {
-		"sourceName": "철도산업정보센터_운영기관·노선·역 코드정보",
+		"sourceName": "철도산업정보센터 공식 엑셀·도시철도 전체노선정보 API",
 		"sourcePage": "https://data.kric.go.kr/rips/M_04_02/detail.do?id=16",
 		"downloadUrl": "https://data.kric.go.kr/rips/download.file?type=L&id=16&answerId=16&fileId=1",
 		"sourceDate": "2026-05-11",
-		"generatedAt": "2026-07-12T08:03:40.344Z",
+		"apiSourcePage": "https://data.kric.go.kr/rips/M_01_02/detail.do?id=431&service=trainUseInfo&operation=subwayRouteInfo",
+		"apiCheckedAt": "2026-07-14T00:51:42.213Z",
+		"apiDifferenceCount": 6,
+		"generatedAt": "2026-07-14T00:51:42.213Z",
 		"stationCount": 668,
 		"lineCount": 24,
 		"excluded": ["수도권 외 노선", "운행이 중단된 자기부상 노선"]
@@ -957,6 +960,12 @@
 			"id": "능곡",
 			"name": "능곡",
 			"lines": ["경의·중앙선", "서해선"],
+			"operators": ["한국철도공사"]
+		},
+		{
+			"id": "능길",
+			"name": "능길",
+			"lines": ["4호선", "수인·분당선"],
 			"operators": ["한국철도공사"]
 		},
 		{
@@ -2514,12 +2523,6 @@
 			"operators": ["서울교통공사", "한국철도공사"]
 		},
 		{
-			"id": "신길온천",
-			"name": "신길온천",
-			"lines": ["4호선", "수인·분당선"],
-			"operators": ["한국철도공사"]
-		},
-		{
 			"id": "신내",
 			"name": "신내",
 			"lines": ["6호선", "경춘선"],
@@ -3156,6 +3159,12 @@
 			"operators": ["한국철도공사"]
 		},
 		{
+			"id": "용인중앙시장(용인예술과학대)",
+			"name": "용인중앙시장(용인예술과학대)",
+			"lines": ["에버라인"],
+			"operators": ["용인경량전철주식회사"]
+		},
+		{
 			"id": "우장산",
 			"name": "우장산",
 			"lines": ["5호선"],
@@ -3166,12 +3175,6 @@
 			"name": "운길산",
 			"lines": ["경의·중앙선"],
 			"operators": ["한국철도공사"]
-		},
-		{
-			"id": "운동장.송담대",
-			"name": "운동장.송담대",
-			"lines": ["에버라인"],
-			"operators": ["용인경량전철주식회사"]
 		},
 		{
 			"id": "운서",

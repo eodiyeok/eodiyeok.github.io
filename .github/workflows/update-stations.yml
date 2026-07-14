@@ -25,6 +25,8 @@ jobs:
       - run: npm ci
       - name: Update from official source
         run: npm run data:update
+        env:
+          KRIC_SERVICE_KEY: ${{ secrets.KRIC_SERVICE_KEY }}
       - name: Check whether data changed
         id: changes
         run: |

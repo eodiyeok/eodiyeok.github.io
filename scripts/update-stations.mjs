@@ -1,9 +1,13 @@
 import { readFile, writeFile } from 'node:fs/promises';
-import { dirname, resolve } from 'node:path';
+import { homedir } from 'node:os';
+import { dirname, join, resolve } from 'node:path';
 import { fileURLToPath } from 'node:url';
 import ExcelJS from 'exceljs';
 
 const SOURCE_LIST = 'https://data.kric.go.kr/rips/M_04_02/intro.do';
+const API_ENDPOINT = 'https://openapi.kric.go.kr/openapi/trainUseInfo/subwayRouteInfo';
+const API_PAGE =
+	'https://data.kric.go.kr/rips/M_01_02/detail.do?id=431&service=trainUseInfo&operation=subwayRouteInfo';
 const OUTPUT = resolve(dirname(fileURLToPath(import.meta.url)), '../src/lib/data/stations.json');
 
 const LINE_NAMES = {
@@ -182,12 +186,92 @@ async function loadWorkbookRows(bytes) {
 		if (rowNumber === 1) return;
 		const value = (header) => row.getCell(headerIndexes.get(header)).text.trim();
 		const line = normalizedLine(value('LN_NM'));
-		if (!CAPITAL_OPERATOR_CODES.has(value('RAIL_OPR_ISTT_CD')) || !INCLUDED_LINES.has(line)) return;
+		const operatorCode = value('RAIL_OPR_ISTT_CD');
+		if (!CAPITAL_OPERATOR_CODES.has(operatorCode) || !INCLUDED_LINES.has(line)) return;
 		const name = value('STIN_NM');
 		const operator = value('RAIL_OPR_ISTT_NM');
-		if (name && operator) rows.push({ name, line, operator });
+		if (name && operator) {
+			rows.push({
+				name,
+				line,
+				operator,
+				operatorCode,
+				lineCode: value('LN_CD')
+			});
+		}
 	});
 	return rows;
+}
+
+async function loadKricServiceKey() {
+	if (process.env.KRIC_SERVICE_KEY) return process.env.KRIC_SERVICE_KEY;
+
+	let credentials;
+	try {
+		credentials = await readFile(join(homedir(), '.config/credentials/kric.env'), 'utf8');
+	} catch {
+		throw new Error(
+			'KRIC_SERVICE_KEY가 없습니다. WSL 자격증명 파일이나 GitHub Secret을 확인하세요.'
+		);
+	}
+	const match = credentials.match(/^KRIC_SERVICE_KEY=(?:'([^']+)'|"([^"]+)"|([^\r\n]+))$/m);
+	const key = match?.[1] ?? match?.[2] ?? match?.[3];
+	if (!key) throw new Error('KRIC 자격증명 파일에서 서비스 키를 읽지 못했습니다.');
+	return key;
+}
+
+function stationLinePairs(rows) {
+	return new Set(rows.map((row) => `${row.name}::${row.line}`));
+}
+
+async function loadApiRows(workbookRows, serviceKey) {
+	const operatorNames = new Map(workbookRows.map((row) => [row.operatorCode, row.operator]));
+	const lineCodes = [...new Set(workbookRows.map((row) => row.lineCode))];
+	const payloads = await Promise.all(
+		lineCodes.map(async (lineCode) => {
+			const url = new URL(API_ENDPOINT);
+			url.search = new URLSearchParams({
+				serviceKey,
+				format: 'json',
+				mreaWideCd: '01',
+				lnCd: lineCode
+			});
+			const payload = await (await fetchWithRetry(url, `KRIC API ${lineCode} 노선`)).json();
+			if (payload.header?.resultCode !== '00' || !Array.isArray(payload.body)) {
+				throw new Error(
+					`KRIC API ${lineCode} 노선 오류: ${payload.header?.resultMsg ?? '응답 형식 오류'}`
+				);
+			}
+			return payload.body;
+		})
+	);
+
+	const rows = payloads
+		.flat()
+		.map((row) => ({
+			name: String(row.stinNm ?? '').trim(),
+			line: normalizedLine(String(row.routNm ?? '').trim()),
+			operator: operatorNames.get(String(row.railOprIsttCd)) ?? String(row.railOprIsttCd)
+		}))
+		.filter((row) => row.name && INCLUDED_LINES.has(row.line));
+
+	const apiPairs = stationLinePairs(rows);
+	const workbookPairs = stationLinePairs(workbookRows);
+	if (apiPairs.size < workbookPairs.size * 0.9) {
+		throw new Error(
+			`KRIC API 응답이 공식 엑셀보다 지나치게 적습니다: ${apiPairs.size}/${workbookPairs.size}`
+		);
+	}
+	const onlyApi = [...apiPairs].filter((pair) => !workbookPairs.has(pair));
+	const onlyWorkbook = [...workbookPairs].filter((pair) => !apiPairs.has(pair));
+	console.log(
+		`KRIC API 확인: ${apiPairs.size}개 역-노선, 엑셀과 차이 API ${onlyApi.length}개 / 엑셀 ${onlyWorkbook.length}개`
+	);
+	if (onlyApi.length > 0 && onlyApi.length <= 10) {
+		console.log(`API 기준 반영: ${onlyApi.join(', ')}`);
+	}
+
+	return { rows, onlyApi, onlyWorkbook };
 }
 
 function buildStationData(rows) {
@@ -241,7 +325,9 @@ const bytes =
 		: Buffer.from(
 				await (await fetchWithRetry(source.downloadUrl, '역 코드정보 엑셀')).arrayBuffer()
 			);
-const { lines, stations } = buildStationData(await loadWorkbookRows(bytes));
+const workbookRows = await loadWorkbookRows(bytes);
+const apiResult = await loadApiRows(workbookRows, await loadKricServiceKey());
+const { lines, stations } = buildStationData(apiResult.rows);
 
 let existingOutput = null;
 try {
@@ -252,10 +338,13 @@ try {
 
 const output = {
 	meta: {
-		sourceName: '철도산업정보센터_운영기관·노선·역 코드정보',
+		sourceName: '철도산업정보센터 공식 엑셀·도시철도 전체노선정보 API',
 		sourcePage: source.sourcePage,
 		downloadUrl: source.downloadUrl,
 		sourceDate: source.sourceDate,
+		apiSourcePage: API_PAGE,
+		apiCheckedAt: new Date().toISOString(),
+		apiDifferenceCount: apiResult.onlyApi.length + apiResult.onlyWorkbook.length,
 		generatedAt: new Date().toISOString(),
 		stationCount: stations.length,
 		lineCount: lines.length,
@@ -267,7 +356,10 @@ const output = {
 
 const withoutGeneratedAt = (value) => {
 	const copy = structuredClone(value);
-	if (copy?.meta) delete copy.meta.generatedAt;
+	if (copy?.meta) {
+		delete copy.meta.generatedAt;
+		delete copy.meta.apiCheckedAt;
+	}
 	return copy;
 };
 

@@ -369,7 +369,7 @@
 
 	<footer>
 		<p>
-			역 정보 {formatSourceDate(stationData.meta.sourceDate)} 기준 ·
+			공식 엑셀 {formatSourceDate(stationData.meta.sourceDate)} 기준 · KRIC API 보완 ·
 			<!-- eslint-disable-next-line svelte/no-navigation-without-resolve -->
 			<a href={stationData.meta.sourcePage} target="_blank" rel="noreferrer"
 				>철도산업정보센터 공식 자료</a

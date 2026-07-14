@@ -17,7 +17,7 @@ npm run dev -- --host 0.0.0.0
 
 ## 역 정보 갱신
 
-철도산업정보센터가 변경 때마다 공개하는 운영기관·노선·역 코드정보 엑셀을 내려받아 수도권 역 목록을 다시 만듭니다. 별도 API 키는 필요하지 않습니다.
+철도산업정보센터가 변경 때마다 공개하는 운영기관·노선·역 코드정보 엑셀로 노선 코드를 확인하고, 도시철도 전체노선정보 API의 최신 역명을 적용해 수도권 역 목록을 다시 만듭니다. 로컬에서는 `~/.config/credentials/kric.env`, GitHub Actions에서는 `KRIC_SERVICE_KEY` Secret을 사용합니다.
 
 ```sh
 npm run data:update
