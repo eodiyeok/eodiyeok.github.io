@@ -1,13 +1,13 @@
 {
   "meta": {
     "sourceName": "철도산업정보센터 공식 엑셀·도시철도 전체노선정보 API",
-    "sourcePage": "https://data.kric.go.kr/rips/M_04_02/detail.do?id=16",
-    "downloadUrl": "https://data.kric.go.kr/rips/download.file?type=L&id=16&answerId=16&fileId=1",
-    "sourceDate": "2026-05-11",
+    "sourcePage": "https://data.kric.go.kr/rips/M_04_02/detail.do?id=17",
+    "downloadUrl": "https://data.kric.go.kr/rips/download.file?type=L&id=17&answerId=17&fileId=1",
+    "sourceDate": "2026-07-11",
     "apiSourcePage": "https://data.kric.go.kr/rips/M_01_02/detail.do?id=431&service=trainUseInfo&operation=subwayRouteInfo",
-    "apiCheckedAt": "2026-07-21T22:13:08.975Z",
-    "apiDifferenceCount": 8,
-    "generatedAt": "2026-07-21T22:13:08.975Z",
+    "apiCheckedAt": "2026-07-22T22:16:45.725Z",
+    "apiDifferenceCount": 6,
+    "generatedAt": "2026-07-22T22:16:45.725Z",
     "stationCount": 668,
     "lineCount": 24,
     "excluded": [
